@@ -645,15 +645,19 @@ static void bond_state_changed(bt_status_t status, bt_bdaddr_t *bd_addr, bt_bond
                       state, pairing_cb.state, pairing_cb.sdp_attempts);
 
     HAL_CBACK(bt_hal_cbacks, bond_state_changed_cb, status, bd_addr, state);
-
     if (state == BT_BOND_STATE_BONDING)
     {
         pairing_cb.state = state;
         bdcpy(pairing_cb.bd_addr, bd_addr->address);
-    } else {
+    } else if ((state == BT_BOND_STATE_NONE)&&
+        ((bdcmp(bd_addr->address, pairing_cb.bd_addr) == 0) ||
+        (bdcmp(bd_addr->address, pairing_cb.static_bdaddr.address) == 0)))
+    {
+        memset(&pairing_cb, 0, sizeof(pairing_cb));
+    }else{
         if ((!pairing_cb.sdp_attempts)&&
             ((bdcmp(bd_addr->address, pairing_cb.bd_addr) == 0) ||
-             (bdcmp(bd_addr->address, pairing_cb.static_bdaddr.address) == 0)))
+            (bdcmp(bd_addr->address, pairing_cb.static_bdaddr.address) == 0)))
             memset(&pairing_cb, 0, sizeof(pairing_cb));
         else
             BTIF_TRACE_DEBUG("%s: BR-EDR service discovery active", __func__);
@@ -1165,6 +1169,19 @@ static void btif_dm_ssp_cfm_req_evt(tBTA_DM_SP_CFM_REQ *p_ssp_cfm_req)
                  p_ssp_cfm_req->rmt_io_caps == HCI_IO_CAP_NO_IO)))
         {
             BTIF_TRACE_EVENT("%s: User consent needed for incoming pairing request. loc_io_caps: %d, rmt_io_caps: %d",
+                __FUNCTION__, p_ssp_cfm_req->loc_io_caps, p_ssp_cfm_req->rmt_io_caps);
+        }
+        /* Errata:4348
+         * Pairing confirmation for JustWorks needed if:
+         * 1. Outgoing (non-temporary) pairing is detected AND
+         * 2. local IO capabilities are DisplayYesNo AND
+         * 3. remote IO capbiltiies are NoInputNoOutput
+         */
+        else if (!is_incoming && pairing_cb.bond_type != BOND_TYPE_TEMPORARY &&
+                (p_ssp_cfm_req->loc_io_caps == HCI_IO_CAP_DISPLAY_YESNO) &&
+                (p_ssp_cfm_req->rmt_io_caps == HCI_IO_CAP_NO_IO))
+        {
+            BTIF_TRACE_EVENT("%s: Show pairing pop up for outgoing pairing when loc_io_caps: %d, rmt_io_caps: %d",
                 __FUNCTION__, p_ssp_cfm_req->loc_io_caps, p_ssp_cfm_req->rmt_io_caps);
         }
         else
